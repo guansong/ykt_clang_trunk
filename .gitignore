@@ -18,6 +18,8 @@
 # vim swap files
 .*.sw?
 .sw?
+# ctags file
+tags
 
 #==============================================================================#
 # Explicit files to ignore (only matches one).
