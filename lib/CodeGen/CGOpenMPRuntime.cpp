@@ -5516,6 +5516,71 @@ public:
   }
 }; // class CGOpenMPRuntime_PowerPC
 
+class CGOpenMPRuntime_HSAIL: public CGOpenMPRuntime {
+public:
+  CGOpenMPRuntime_HSAIL(CodeGenModule &CGM) 
+    :CGOpenMPRuntime(CGM) {
+
+  };
+
+  /// Implement some target dependent transformation for the target region
+  /// outlined function
+  ///
+  virtual void PostProcessTargetFunction(llvm::Function *F) {
+
+    CGOpenMPRuntime::PostProcessTargetFunction(F);
+
+    // No further post processing required if we are not in target mode
+    if (!CGM.getLangOpts().OpenMPTargetMode)
+      return;
+
+
+    llvm::Module &M = CGM.getModule();
+    llvm::LLVMContext &C = M.getContext();
+
+    // Get "OpenCL/Spir" metadata node
+    {
+      llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata("opencl.kernels");
+
+      llvm::Metadata *ArgAddrSpace[] = {
+        llvm::MDString::get(C, "kernel_arg_addr_space"),
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 1)),
+      };
+      
+      llvm::Metadata *MDVals[] = {
+        llvm::ConstantAsMetadata::get(F), 
+        llvm::MDString::get(C, "kernel")
+        // FIXME, need more
+      };
+      // Append metadata
+      MD->addOperand(llvm::MDNode::get(C, MDVals));
+    }
+
+    {
+      llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata("opencl.ocl.version");
+      llvm::Metadata *MDVals[] = {
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 2)),
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 0))
+      };
+      // Append metadata
+      MD->addOperand(llvm::MDNode::get(C, MDVals));
+    }
+
+    {
+      llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata("opencl.spir.version");
+      llvm::Metadata *MDVals[] = {
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 2)),
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 0))
+      };
+      // Append metadata
+      MD->addOperand(llvm::MDNode::get(C, MDVals));
+    }
+
+    // Mark the spir_kernel
+    F->setCallingConv(llvm::CallingConv::SPIR_KERNEL);
+  }
+
+};
 
 ///===---------------
 ///
@@ -5523,7 +5588,13 @@ public:
 ///
 ///===---------------
 
+extern bool isHSATriple;
+
 CGOpenMPRuntime *CodeGen::CreateOpenMPRuntime(CodeGenModule &CGM) {
+  if (isHSATriple) {
+    llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << CGM.getTarget().getTriple().getArch() << "\n";
+    return new CGOpenMPRuntime_HSAIL(CGM);
+  }
 
   switch (CGM.getTarget().getTriple().getArch()) {
   default:
