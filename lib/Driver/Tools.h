@@ -782,6 +782,38 @@ namespace NVPTX {
   };
 } // end namespace NVPTX.
 
+namespace HSAIL {
+  // For NVPTX, we do not need to instantiate tools for PreProcess, PreCompile and Compile.
+  // We simply use "clang -cc1" for those actions.
+  class LLVM_LIBRARY_VISIBILITY Assemble : public Tool {
+  public:
+    Assemble(const ToolChain &TC) : Tool("HSAIL::Assemble",
+      "hc", TC) {}
+
+    virtual bool hasIntegratedCPP() const { return false; }
+    virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                              const InputInfo &Output,
+                              const InputInfoList &Inputs,
+                              const llvm::opt::ArgList &TCArgs,
+                              const char *LinkingOutput) const;
+  };
+
+  class LLVM_LIBRARY_VISIBILITY Link : public Tool {
+  public:
+    Link(const ToolChain &TC) : Tool("HSAIL::Link",
+      "hlink", TC) {}
+
+    virtual bool hasIntegratedCPP() const { return false; }
+    virtual bool isLinkJob() const { return true; }
+    virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                              const InputInfo &Output,
+                              const InputInfoList &Inputs,
+                              const llvm::opt::ArgList &TCArgs,
+                              const char *LinkingOutput) const;
+  };
+} // end namespace NVPTX.
+
+
 namespace CrossWindows {
 class LLVM_LIBRARY_VISIBILITY Assembler : public Tool {
 public:

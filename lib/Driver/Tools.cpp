@@ -40,6 +40,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetParser.h"
 
@@ -3511,6 +3512,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-emit-llvm-uselists");
   }
 
+  if (Args.hasArg(options::OPT_fopenmp)){
+    if ( JA.getOffloadingDevice() && JA.getType() == types::TY_PP_Asm ) {
+      if (Triple.getArch() == llvm::Triple::hsail64) {
+        if (! isa<PreprocessJobAction>(JA)) {
+          //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " HSAIL" << "\n";
+          CmdArgs.push_back("-emit-llvm");
+        }
+      }
+    }
+  }
+
   // We normally speed up the clang process a bit by skipping destructors at
   // exit, but when we're generating diagnostics we can rely on some of the
   // cleanup.
@@ -5354,6 +5366,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   } else {
     assert(Output.isNothing() && "Invalid output.");
   }
+
+  /*
+  llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << "\n";
+  for (ArgStringList::const_iterator it = CmdArgs.begin(), ie = CmdArgs.end(); it != ie; ++it) { 
+    llvm::dbgs() << *it << " "; 
+  }
+  llvm::dbgs() << "\n";
+  */
 
   addDashXForInput(Args, Input, CmdArgs);
 
@@ -10487,4 +10507,131 @@ void tools::SHAVE::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
       Args.MakeArgString(getToolChain().GetProgramPath("moviAsm"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Exec),
                                           CmdArgs, Inputs));
+}
+
+/// HSAIL Tools
+// We pass assemble and link construction to the ptxas and
+// nvlink tools, respectively.
+// FIXME: get the exact cpu we are assembling to nad include it
+// as part of the arguments
+
+void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                       const InputInfo &Output,
+                                       const InputInfoList &Inputs,
+                                       const ArgList &Args,
+                                       const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+
+  if (Args.hasArg(options::OPT_v))
+    CmdArgs.push_back("-v");
+
+  if (Args.hasArg(options::OPT_g_Flag))
+    CmdArgs.push_back("-g");
+
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  //CmdArgs.push_back("-c");
+
+  std::string CPU = getCPUName(Args, getToolChain().getTriple(),
+      JA.getOffloadingDevice());
+
+  if (!CPU.empty()) {
+    CmdArgs.push_back("-arch");
+    CmdArgs.push_back(Args.MakeArgString(CPU));
+  }
+
+  for (InputInfoList::const_iterator
+       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    CmdArgs.push_back(II.getFilename());
+  }
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("hc"));
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
+void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+  } else {
+    assert(Output.isNothing() && "Invalid output.");
+  }
+
+  if (Args.hasArg(options::OPT_g_Flag))
+    CmdArgs.push_back("-g");
+
+  if (Args.hasArg(options::OPT_v))
+    CmdArgs.push_back("-v");
+
+  std::string CPU = getCPUName(Args, getToolChain().getTriple(),
+      JA.getOffloadingDevice());
+
+  if (!CPU.empty()) {
+    CmdArgs.push_back("-arch");
+    CmdArgs.push_back(Args.MakeArgString(CPU));
+  }
+
+  // add linking against library implementing OpenMP calls on NVPTX target
+  // CmdArgs.push_back("-lomptarget-nvptx");
+
+  // nvlink relies on the extension used by the input files
+  // to decide what to do. Given that ptxas produces cubin files
+  // we need to copy the input files to a new file with the right
+  // extension.
+  // FIXME: this can be efficiently done by specifying a new
+  // output type for the assembly action, however this would expose
+  // the target details to the driver and maybe we do not want to do
+  // that
+  for (const auto &II : Inputs) {
+
+    if (II.getType() == types::TY_LLVM_IR ||
+        II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC ||
+        II.getType() == types::TY_LTO_BC){
+      C.getDriver().Diag(diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+      continue;
+    }
+
+    // Currently, we only pass the input files to the linker, we do not pass
+    // any libraries that may be valid only for the host.
+    if (!II.isFilename())
+      continue;
+
+    StringRef Name = llvm::sys::path::filename(II.getFilename());
+    std::pair<StringRef, StringRef> Split = Name.rsplit('.');
+    std::string TmpName = C.getDriver().GetTemporaryPath(Split.first,"bc");
+
+    const char *BrigF = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+
+    const char *CopyExec =
+        Args.MakeArgString(getToolChain().GetProgramPath(
+            C.getDriver().IsCLMode() ? "copy" : "cp" ));
+
+    ArgStringList CopyCmdArgs;
+    CopyCmdArgs.push_back(II.getFilename());
+    CopyCmdArgs.push_back(BrigF);
+    C.addCommand(llvm::make_unique<Command>(JA, *this, CopyExec, CopyCmdArgs, Inputs));
+
+    CmdArgs.push_back(BrigF);
+  }
+
+  AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+
+  // add paths specified in LIBRARY_PATH environment variable as -L options
+  // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
 }
