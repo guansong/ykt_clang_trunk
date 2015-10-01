@@ -1942,8 +1942,8 @@ static void ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
   Opts.UseLineDirectives = Args.hasArg(OPT_fuse_line_directives);
 }
 
-// A fake HSA triple for now
-static llvm::Triple HSATriple;
+// A global HSA flag for now
+bool isHSATriple=false;
 
 static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
   using namespace options;
@@ -1962,8 +1962,11 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
   if (TT.getArch() == llvm::Triple::hsail64) {
     //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << TT.getTriple() << "\n";
 
-    HSATriple.setArch(llvm::Triple::x86_64);
-    Opts.Triple = HSATriple.getTriple();
+    isHSATriple = true;
+
+    llvm::Triple fakeTriple;
+    fakeTriple.setArch(llvm::Triple::x86_64);
+    Opts.Triple = fakeTriple.getTriple();
   }
 }
 
