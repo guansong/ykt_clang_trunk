@@ -1942,8 +1942,7 @@ static void ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
   Opts.UseLineDirectives = Args.hasArg(OPT_fuse_line_directives);
 }
 
-// A global HSA flag for now
-bool isHSATriple=false;
+extern bool isHSATriple;
 
 static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
   using namespace options;
