@@ -788,7 +788,7 @@ namespace HSAIL {
   class LLVM_LIBRARY_VISIBILITY Assemble : public Tool {
   public:
     Assemble(const ToolChain &TC) : Tool("HSAIL::Assemble",
-      "hc", TC) {}
+      "as", TC) {}
 
     virtual bool hasIntegratedCPP() const { return false; }
     virtual void ConstructJob(Compilation &C, const JobAction &JA,

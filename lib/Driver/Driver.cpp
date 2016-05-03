@@ -2724,7 +2724,8 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         break;
       default:
         // This is an HSAIL
-        if (Target.getArch() == llvm::Triple::hsail64) {
+        if (Target.getArch() == llvm::Triple::hsail ||
+            Target.getArch() == llvm::Triple::hsail64) {
           TC = new toolchains::HSAIL_TC(*this, Target, Args,
                                         IsOpenMPTargetToolchain);
           break;

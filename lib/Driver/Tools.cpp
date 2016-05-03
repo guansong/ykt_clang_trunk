@@ -3514,7 +3514,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Args.hasArg(options::OPT_fopenmp)){
     if ( JA.getOffloadingDevice() && JA.getType() == types::TY_PP_Asm ) {
-      if (Triple.getArch() == llvm::Triple::hsail64) {
+      if (Triple.getArch() == llvm::Triple::hsail ||
+          Triple.getArch() == llvm::Triple::hsail64) {
         if (! isa<PreprocessJobAction>(JA)) {
           //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " HSAIL" << "\n";
           CmdArgs.push_back("-emit-llvm");
@@ -10522,17 +10523,20 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
                                        const char *LinkingOutput) const {
   ArgStringList CmdArgs;
 
+  /*
   if (Args.hasArg(options::OPT_v))
     CmdArgs.push_back("-v");
 
   if (Args.hasArg(options::OPT_g_Flag))
     CmdArgs.push_back("-g");
+  */
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
   //CmdArgs.push_back("-c");
 
+  /*
   std::string CPU = getCPUName(Args, getToolChain().getTriple(),
       JA.getOffloadingDevice());
 
@@ -10540,6 +10544,7 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-arch");
     CmdArgs.push_back(Args.MakeArgString(CPU));
   }
+  */
 
   for (InputInfoList::const_iterator
        it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
@@ -10547,9 +10552,19 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(II.getFilename());
   }
 
+  //printf("clang full version: %s\n",getClangFullVersion().c_str());
+
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hc"));
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
+  if (!access (Exec, X_OK)){
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
+  else {
+    Exec = Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-as");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
+
 }
 
 void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
@@ -10580,18 +10595,18 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(CPU));
   }
 
-  // add linking against library implementing OpenMP calls on NVPTX target
-  // CmdArgs.push_back("-lomptarget-nvptx");
+  // Need to compute this as we are handline BC files
+  // CmdArgs.push_back("-lomptarget-hsail");
 
-  // nvlink relies on the extension used by the input files
-  // to decide what to do. Given that ptxas produces cubin files
-  // we need to copy the input files to a new file with the right
+  // We copy the input files to a new file with the right
   // extension.
+  //
   // FIXME: this can be efficiently done by specifying a new
   // output type for the assembly action, however this would expose
   // the target details to the driver and maybe we do not want to do
   // that
   for (const auto &II : Inputs) {
+    int SaveTemps = C.getDriver().isSaveTempsEnabled();
 
     if (II.getType() == types::TY_LLVM_IR ||
         II.getType() == types::TY_LTO_IR ||
@@ -10611,6 +10626,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     std::pair<StringRef, StringRef> Split = Name.rsplit('.');
     std::string TmpName = C.getDriver().GetTemporaryPath(Split.first,"bc");
 
+
     const char *BrigF = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
 
     const char *CopyExec =
@@ -10618,20 +10634,61 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
             C.getDriver().IsCLMode() ? "copy" : "cp" ));
 
     ArgStringList CopyCmdArgs;
+
+    // Do promotion here if we have an external pass
+    int PromotePass = !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK);
+
+    if (PromotePass) {
+      CopyExec =
+        Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
+
+      CopyCmdArgs.push_back("-load");
+      CopyCmdArgs.push_back(Args.MakeArgString(getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so"));
+      CopyCmdArgs.push_back("-promote-globals");
+    }
+
     CopyCmdArgs.push_back(II.getFilename());
-    CopyCmdArgs.push_back(BrigF);
+
+    if (PromotePass) {
+      CopyCmdArgs.push_back("-o");
+    }
+
+    if (PromotePass && SaveTemps) {
+      CopyCmdArgs.push_back(Args.MakeArgString(Args.MakeArgString(Split.first.str()+".p."+Split.second.str())));
+    }
+    else {
+      CopyCmdArgs.push_back(BrigF);
+    }
+
     C.addCommand(llvm::make_unique<Command>(JA, *this, CopyExec, CopyCmdArgs, Inputs));
 
-    CmdArgs.push_back(BrigF);
+    if (SaveTemps) {
+      CmdArgs.push_back(Args.MakeArgString(Args.MakeArgString(Split.first.str()+".p."+Split.second.str())));
+    }
+    else {
+      CmdArgs.push_back(BrigF);
+    }
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
 
+  // Need to compute this as we are handline BC files
   // add paths specified in LIBRARY_PATH environment variable as -L options
   // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
+  //printf("hlink: %s\n", (getToolChain().GetProgramPath("hlink").c_str()));
+
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  if (!access (Exec, X_OK)){
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
+  else {
+    int SaveTemps = C.getDriver().isSaveTempsEnabled();
+
+    // Let's do things step by step
+    Exec = Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
 
 }

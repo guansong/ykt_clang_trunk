@@ -1958,13 +1958,14 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
     Opts.Triple = llvm::sys::getDefaultTargetTriple();
 
   llvm::Triple TT(Opts.Triple);
-  if (TT.getArch() == llvm::Triple::hsail64) {
+  if (TT.getArch() == llvm::Triple::hsail ||
+      TT.getArch() == llvm::Triple::hsail64) {
     //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << TT.getTriple() << "\n";
 
     isHSATriple = true;
 
     llvm::Triple fakeTriple;
-    fakeTriple.setArch(llvm::Triple::x86_64);
+    fakeTriple.setArch(llvm::Triple::amdgcn);
     Opts.Triple = fakeTriple.getTriple();
   }
 }
