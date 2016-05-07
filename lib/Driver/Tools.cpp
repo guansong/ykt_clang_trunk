@@ -244,7 +244,10 @@ static void addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &C
   }
 
   if (!Found) {
-
+    if (!access((std::string(DefaultPath) + "/" + ArgName).c_str(), F_OK)) {
+      CmdArgs.push_back(Args.MakeArgString(std::string(DefaultPath) + "/" + ArgName));
+      Found = true;
+    }
   }
 
 }
@@ -10616,14 +10619,14 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   }
   */
 
+  //FIXME
+  assert(Inputs.size()==1 && "Invalid size");
   //FIXME: Why this is a list???
   for (InputInfoList::const_iterator
        it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
     const InputInfo &II = *it;
     CmdArgs.push_back(II.getFilename());
   }
-  //FIXME
-  assert(Inputs.size()==1 && "Invalid size");
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hc"));
@@ -10804,18 +10807,6 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
   //  printf ("Arg %s\n", CmdArgs[i]);
   //}
 
-  // Need to compute this as we are handline BC files
-  // add paths specified in LIBRARY_PATH environment variable as -L options
-  // CmdArgs.push_back("-lomptarget-hsail");
-  // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
-
-  addBitCodeLibWithDirectoryList(
-      Args, LnkCmdArgs, "libomptarget-hsail.bc", "BITCODE_LIBRARY_PATH", "");
-  addBitCodeLibWithDirectoryList(
-      Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", "");
-  addBitCodeLibWithDirectoryList(
-      Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", "");
-
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
   //printf("hlink: %s\n", (getToolChain().GetProgramPath("hlink").c_str()));
@@ -10848,6 +10839,18 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
        printf("HSA TOOLS: %s\n", tools);
        printf("HSA BUILTIN: %s\n", builtin);
     */
+
+    // Need to compute this as we are handline BC files
+    // add paths specified in LIBRARY_PATH environment variable as -L options
+    // CmdArgs.push_back("-lomptarget-hsail");
+    // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "libomptarget-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", builtin);
 
     ///////////////////////////
     // Link
