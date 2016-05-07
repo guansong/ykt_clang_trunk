@@ -10593,12 +10593,10 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
                                        const InputInfoList &Inputs,
                                        const ArgList &Args,
                                        const char *LinkingOutput) const {
+  //printf("clang full version: %s\n",getClangFullVersion().c_str());
   ArgStringList CmdArgs;
 
   /*
-  if (Args.hasArg(options::OPT_v))
-    CmdArgs.push_back("-v");
-
   if (Args.hasArg(options::OPT_g_Flag))
     CmdArgs.push_back("-g");
   */
@@ -10618,13 +10616,14 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   }
   */
 
+  //FIXME: Why this is a list???
   for (InputInfoList::const_iterator
        it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
     const InputInfo &II = *it;
     CmdArgs.push_back(II.getFilename());
   }
-
-  //printf("clang full version: %s\n",getClangFullVersion().c_str());
+  //FIXME
+  assert(Inputs.size()==1 && "Invalid size");
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hc"));
@@ -10632,11 +10631,36 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   int Xtool = !access (Exec, X_OK);
 
   if (Xtool){
+    if (Args.hasArg(options::OPT_v))
+      CmdArgs.insert(CmdArgs.begin(), "-v");
+
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
   else {
-    Exec = Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-as");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+    const char *AsmExec =
+      Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-as");
+
+    ArgStringList AsmCmdArgs;
+
+    int PromotePass = (1 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
+
+    if (PromotePass) {
+      AsmExec = Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
+      AsmCmdArgs.push_back("-load");
+      AsmCmdArgs.push_back(
+          Args.MakeArgString(getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so"));
+      AsmCmdArgs.push_back("-promote-globals");
+    }
+
+    // Input
+    AsmCmdArgs.push_back(Inputs[0].getFilename());
+
+    AsmCmdArgs.push_back("-o");
+
+    // Output
+    AsmCmdArgs.push_back(Output.getFilename());
+
+    C.addCommand(llvm::make_unique<Command>(JA, *this, AsmExec, AsmCmdArgs, Inputs));
   }
 
 }
@@ -10735,7 +10759,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     ArgStringList CopyCmdArgs;
 
     // Do promotion here if we have an external pass
-    int PromotePass = !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK);
+    int PromotePass = (0 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
 
     if (PromotePass) {
       CopyExec = Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
@@ -10745,6 +10769,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CopyCmdArgs.push_back("-promote-globals");
     }
 
+    // input
     CopyCmdArgs.push_back(II.getFilename());
 
     if (PromotePass) {
@@ -10804,7 +10829,9 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
   else {
+    ///////////////////////////
     // Let's do things step by step here
+    ///////////////////////////
     // get default
     if (!hlc) {
       hlc = "/opt/rocm/hcc-hsail/hlc/bin";
@@ -10820,10 +10847,16 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
        printf("HSA HLC: %s\n", hlc);
        printf("HSA TOOLS: %s\n", tools);
        printf("HSA BUILTIN: %s\n", builtin);
-       */
+    */
 
+    ///////////////////////////
+    // Link
+    ///////////////////////////
     C.addCommand(llvm::make_unique<Command>(JA, *this, LnkExec, LnkCmdArgs, Inputs));
 
+    ///////////////////////////
+    // Pre opt
+    ///////////////////////////
     ArgStringList OptCmdArgs;
     std::string OptName;
     const char *OptTemp;
@@ -10835,20 +10868,20 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
     }
     //-O2 -o
-    if (true) {
-      OptCmdArgs.push_back("-O2");
-      OptCmdArgs.push_back("-o");
+    OptCmdArgs.push_back("-O2");
+    OptCmdArgs.push_back("-o");
 
-      //Opt Output
-      OptCmdArgs.push_back(OptTemp);
-      //Opt Input
-      OptCmdArgs.push_back(LnkTemp);
+    //Opt Output
+    OptCmdArgs.push_back(OptTemp);
+    //Opt Input
+    OptCmdArgs.push_back(LnkTemp);
 
-      Exec = Args.MakeArgString(std::string(hlc) + "/opt");
-      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
-    }
+    Exec = Args.MakeArgString(std::string(hlc) + "/opt");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
 
-
+    ///////////////////////////
+    // Compile
+    ///////////////////////////
     ArgStringList LlcCmdArgs;
     std::string HsailName;
     const char *HsailTemp;
@@ -10860,41 +10893,39 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       HsailTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
     }
     //-O2 -march=hsail64 -filetype=asm -o
-    if (true) {
-      LlcCmdArgs.push_back("-O2");
-      LlcCmdArgs.push_back("-march=hsail64");
-      LlcCmdArgs.push_back("-filetype=asm");
-      LlcCmdArgs.push_back("-o");
+    LlcCmdArgs.push_back("-O2");
+    LlcCmdArgs.push_back("-march=hsail64");
+    LlcCmdArgs.push_back("-filetype=asm");
+    LlcCmdArgs.push_back("-o");
 
-      //Llc Output
-      LlcCmdArgs.push_back(HsailTemp);
-      //Llc Input
-      LlcCmdArgs.push_back(OptTemp);
+    //Llc Output
+    LlcCmdArgs.push_back(HsailTemp);
+    //Llc Input
+    LlcCmdArgs.push_back(OptTemp);
 
-      Exec = Args.MakeArgString(std::string(hlc) + "/llc");
-      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
-    }
+    Exec = Args.MakeArgString(std::string(hlc) + "/llc");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
 
+    ///////////////////////////
+    // Assemble
+    ///////////////////////////
     ArgStringList AsmCmdArgs;
-    std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
-    const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
+    //std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
+    //const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
     //-assemble -brig -bif32 -o
-    if (true) {
-      AsmCmdArgs.push_back("-assemble");
-      AsmCmdArgs.push_back("-brig");
-      AsmCmdArgs.push_back("-bif32");
-      AsmCmdArgs.push_back("-o");
+    AsmCmdArgs.push_back("-assemble");
+    AsmCmdArgs.push_back("-brig");
+    AsmCmdArgs.push_back("-bif32");
+    AsmCmdArgs.push_back("-o");
 
-      //Asm Output
-      //AsmCmdArgs.push_back(BrigTemp);
-      AsmCmdArgs.push_back(Output.getFilename());
-      //Asm Input
-      AsmCmdArgs.push_back(HsailTemp);
+    //Asm Output
+    //AsmCmdArgs.push_back(BrigTemp);
+    AsmCmdArgs.push_back(Output.getFilename());
+    //Asm Input
+    AsmCmdArgs.push_back(HsailTemp);
 
-      Exec = Args.MakeArgString(std::string(tools) + "/HSAILasm");
-      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
-    }
-
+    Exec = Args.MakeArgString(std::string(tools) + "/HSAILasm");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
   }
 }
 
