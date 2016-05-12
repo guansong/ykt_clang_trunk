@@ -10631,7 +10631,7 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("hc"));
 
-  int Xtool = !access (Exec, X_OK);
+  int Xtool = (!access(Exec, X_OK) && getenv("XTOOL")) ;
 
   if (Xtool){
     if (Args.hasArg(options::OPT_v))
@@ -10814,7 +10814,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const char *LnkExec =
     Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-link");
 
-  int Xtool = !access (Exec, X_OK);
+  int Xtool = (!access(Exec, X_OK) && getenv("XTOOL")) ;
 
   if (Xtool){
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
