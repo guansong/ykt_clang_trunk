@@ -10846,7 +10846,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
     addBitCodeLibWithDirectoryList(
-        Args, LnkCmdArgs, "libomptarget-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+        Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
     addBitCodeLibWithDirectoryList(
         Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
     addBitCodeLibWithDirectoryList(
