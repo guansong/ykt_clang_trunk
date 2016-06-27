@@ -5542,11 +5542,13 @@ public:
     {
       llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata("opencl.kernels");
 
+      /*
       llvm::Metadata *ArgAddrSpace[] = {
         llvm::MDString::get(C, "kernel_arg_addr_space"),
         llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 1)),
       };
-      
+      */
+
       llvm::Metadata *MDVals[] = {
         llvm::ConstantAsMetadata::get(F), 
         llvm::MDString::get(C, "kernel")
@@ -5592,7 +5594,7 @@ extern bool isHSATriple;
 
 CGOpenMPRuntime *CodeGen::CreateOpenMPRuntime(CodeGenModule &CGM) {
   if (isHSATriple) {
-    llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << CGM.getTarget().getTriple().getArch() << "\n";
+    //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << CGM.getTarget().getTriple().getArch() << "\n";
     return new CGOpenMPRuntime_HSAIL(CGM);
   }
 
