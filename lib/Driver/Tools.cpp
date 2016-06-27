@@ -40,6 +40,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetParser.h"
 
@@ -174,6 +175,81 @@ static void addDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
       CmdArgs.push_back(Args.MakeArgString(Dirs));
     }
   }
+}
+
+static void addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
+                             const char *ArgName, const char *EnvVar, const char *DefaultPath) {
+  const char *DirList = ::getenv(EnvVar);
+  bool CombinedArg = false;
+  bool Found = false;
+
+  if (!DirList)
+    return; // Nothing to do.
+
+  StringRef Name(ArgName);
+  if (Name.equals("-I") || Name.equals("-L"))
+    CombinedArg = true;
+
+  StringRef Dirs(DirList);
+  if (Dirs.empty()) // Empty string should not add '.'.
+    return;
+
+  StringRef::size_type Delim;
+  while ((Delim = Dirs.find(llvm::sys::EnvPathSeparator)) != StringRef::npos) {
+    if (Delim == 0) { // Leading colon.
+      if (CombinedArg) {
+        CmdArgs.push_back(Args.MakeArgString(std::string(ArgName) + "."));
+      } else {
+        if (!access((std::string("./") + ArgName).c_str(), F_OK)){
+          CmdArgs.push_back(Args.MakeArgString(std::string("./") + ArgName));
+          Found = true;
+          break;
+        }
+      }
+    } else {
+      if (CombinedArg) {
+        CmdArgs.push_back(
+            Args.MakeArgString(std::string(ArgName) + Dirs.substr(0, Delim)));
+      } else {
+        if (!access((Dirs.substr(0, Delim) + "/" + ArgName).str().c_str(), F_OK)) {
+          CmdArgs.push_back(Args.MakeArgString(Dirs.substr(0, Delim) + "/" + ArgName));
+          Found = true;
+          break;
+        }
+      }
+    }
+    Dirs = Dirs.substr(Delim + 1);
+  }
+
+  if (!Found) {
+    if (Dirs.empty()) { // Trailing colon.
+      if (CombinedArg) {
+        CmdArgs.push_back(Args.MakeArgString(std::string(ArgName) + "."));
+      } else {
+        if (!access((std::string("./") + ArgName).c_str(), F_OK)){
+          CmdArgs.push_back(Args.MakeArgString(std::string("./") + ArgName));
+          Found = true;
+        }
+      }
+    } else { // Add the last path.
+      if (CombinedArg) {
+        CmdArgs.push_back(Args.MakeArgString(std::string(ArgName) + Dirs));
+      } else {
+        if (!access((Dirs + "/" + ArgName).str().c_str(), F_OK)) {
+          CmdArgs.push_back(Args.MakeArgString(Dirs + "/" + ArgName));
+          Found = true;
+        }
+      }
+    }
+  }
+
+  if (!Found) {
+    if (!access((std::string(DefaultPath) + "/" + ArgName).c_str(), F_OK)) {
+      CmdArgs.push_back(Args.MakeArgString(std::string(DefaultPath) + "/" + ArgName));
+      Found = true;
+    }
+  }
+
 }
 
 namespace {
@@ -3511,6 +3587,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-emit-llvm-uselists");
   }
 
+  if (Args.hasArg(options::OPT_fopenmp)){
+    if ( JA.getOffloadingDevice() && JA.getType() == types::TY_PP_Asm ) {
+      if (Triple.getArch() == llvm::Triple::hsail ||
+          Triple.getArch() == llvm::Triple::hsail64) {
+        if (! isa<PreprocessJobAction>(JA)) {
+          //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " HSAIL" << "\n";
+          CmdArgs.push_back("-emit-llvm");
+        }
+      }
+    }
+  }
+
   // We normally speed up the clang process a bit by skipping destructors at
   // exit, but when we're generating diagnostics we can rely on some of the
   // cleanup.
@@ -5354,6 +5442,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   } else {
     assert(Output.isNothing() && "Invalid output.");
   }
+
+  /*
+  llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << "\n";
+  for (ArgStringList::const_iterator it = CmdArgs.begin(), ie = CmdArgs.end(); it != ie; ++it) { 
+    llvm::dbgs() << *it << " "; 
+  }
+  llvm::dbgs() << "\n";
+  */
 
   addDashXForInput(Args, Input, CmdArgs);
 
@@ -10488,3 +10584,351 @@ void tools::SHAVE::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Exec),
                                           CmdArgs, Inputs));
 }
+
+/// HSAIL Tools
+// We pass assemble and link construction to the ptxas and
+// nvlink tools, respectively.
+// FIXME: get the exact cpu we are assembling to nad include it
+// as part of the arguments
+
+void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                       const InputInfo &Output,
+                                       const InputInfoList &Inputs,
+                                       const ArgList &Args,
+                                       const char *LinkingOutput) const {
+  //printf("clang full version: %s\n",getClangFullVersion().c_str());
+  ArgStringList CmdArgs;
+
+  /*
+  if (Args.hasArg(options::OPT_g_Flag))
+    CmdArgs.push_back("-g");
+  */
+
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  //CmdArgs.push_back("-c");
+
+  /*
+  std::string CPU = getCPUName(Args, getToolChain().getTriple(),
+      JA.getOffloadingDevice());
+
+  if (!CPU.empty()) {
+    CmdArgs.push_back("-arch");
+    CmdArgs.push_back(Args.MakeArgString(CPU));
+  }
+  */
+
+  //FIXME
+  assert(Inputs.size()==1 && "Invalid size");
+  //FIXME: Why this is a list???
+  for (InputInfoList::const_iterator
+       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    CmdArgs.push_back(II.getFilename());
+  }
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("hc"));
+
+  int Xtool = (!access(Exec, X_OK) && getenv("XTOOL")) ;
+
+  if (Xtool){
+    if (Args.hasArg(options::OPT_v))
+      CmdArgs.insert(CmdArgs.begin(), "-v");
+
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
+  else {
+    const char *AsmExec =
+      Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-as");
+
+    ArgStringList AsmCmdArgs;
+
+    int PromotePass = (1 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
+
+    if (PromotePass) {
+      AsmExec = Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
+      AsmCmdArgs.push_back("-load");
+      AsmCmdArgs.push_back(
+          Args.MakeArgString(getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so"));
+      AsmCmdArgs.push_back("-promote-globals");
+    }
+
+    // Input
+    AsmCmdArgs.push_back(Inputs[0].getFilename());
+
+    AsmCmdArgs.push_back("-o");
+
+    // Output
+    AsmCmdArgs.push_back(Output.getFilename());
+
+    C.addCommand(llvm::make_unique<Command>(JA, *this, AsmExec, AsmCmdArgs, Inputs));
+  }
+
+}
+
+void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
+  // get env
+  static const char * hlc = getenv("HSA_HLC_PATH");
+  static const char * tools = getenv("HSA_TOOLS_PATH");
+  static const char * builtin = getenv("HSA_BUILTIN_PATH");
+
+  int SaveTemps = C.getDriver().isSaveTempsEnabled();
+
+  if (!Output.isFilename()) {
+    assert(Output.isNothing() && "Invalid output.");
+  }
+
+  ArgStringList CmdArgs;
+  StringRef OutName = llvm::sys::path::filename(Output.getFilename());
+  std::pair<StringRef, StringRef> Split = OutName.rsplit('.');
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+
+    //Output
+    CmdArgs.push_back(Output.getFilename());
+  }
+
+  ArgStringList LnkCmdArgs;
+  std::string LnkName;
+  const char *LnkTemp;
+  if (SaveTemps) {
+    LnkTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".lnked").c_str());
+  }
+  else {
+    LnkName = C.getDriver().GetTemporaryPath(Split.first,"lnked");
+    LnkTemp = C.addTempFile(C.getArgs().MakeArgString(LnkName.c_str()));
+  }
+  if (true) {
+    LnkCmdArgs.push_back("-suppress-warnings");
+    LnkCmdArgs.push_back("-o");
+
+    //Output
+    LnkCmdArgs.push_back(LnkTemp);
+  }
+
+  /*
+  if (Args.hasArg(options::OPT_g_Flag))
+    CmdArgs.push_back("-g");
+  */
+
+  if (Args.hasArg(options::OPT_v)) {
+    CmdArgs.push_back("-v");
+  }
+
+  std::string CPU = getCPUName(Args, getToolChain().getTriple(),
+      JA.getOffloadingDevice());
+
+  if (!CPU.empty()) {
+    CmdArgs.push_back("-arch");
+    CmdArgs.push_back(Args.MakeArgString(CPU));
+  }
+
+  // We copy the input files to a new file with the right
+  // extension.
+  //
+  // FIXME: this can be efficiently done by specifying a new
+  // output type for the assembly action, however this would expose
+  // the target details to the driver and maybe we do not want to do
+  // that
+  for (const auto &II : Inputs) {
+    if (II.getType() == types::TY_LLVM_IR ||
+        II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC ||
+        II.getType() == types::TY_LTO_BC){
+      C.getDriver().Diag(diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+      continue;
+    }
+
+    // Currently, we only pass the input files to the linker, we do not pass
+    // any libraries that may be valid only for the host.
+    if (!II.isFilename())
+      continue;
+
+    StringRef Name = llvm::sys::path::filename(II.getFilename());
+    std::pair<StringRef, StringRef> Split = Name.rsplit('.');
+    std::string TmpName = C.getDriver().GetTemporaryPath(Split.first,"bc");
+
+    const char *BrigF = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+    const char *CopyExec =
+        Args.MakeArgString(getToolChain().GetProgramPath(C.getDriver().IsCLMode() ? "copy" : "cp" ));
+
+    ArgStringList CopyCmdArgs;
+
+    // Do promotion here if we have an external pass
+    int PromotePass = (0 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
+
+    if (PromotePass) {
+      CopyExec = Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
+      CopyCmdArgs.push_back("-load");
+      CopyCmdArgs.push_back(
+          Args.MakeArgString(getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so"));
+      CopyCmdArgs.push_back("-promote-globals");
+    }
+
+    // input
+    CopyCmdArgs.push_back(II.getFilename());
+
+    if (PromotePass) {
+      CopyCmdArgs.push_back("-o");
+    }
+
+    if (PromotePass && SaveTemps) {
+      CopyCmdArgs.push_back(
+          Args.MakeArgString(Args.MakeArgString(Split.first.str()+".p."+Split.second.str())));
+    }
+    else {
+      CopyCmdArgs.push_back(BrigF);
+    }
+
+    C.addCommand(llvm::make_unique<Command>(JA, *this, CopyExec, CopyCmdArgs, Inputs));
+
+    // Link input files
+    if (PromotePass && SaveTemps) {
+      CmdArgs.push_back(
+          Args.MakeArgString(Args.MakeArgString(Split.first.str()+".p."+Split.second.str())));
+      LnkCmdArgs.push_back(
+          Args.MakeArgString(Args.MakeArgString(Split.first.str()+".p."+Split.second.str())));
+    }
+    else {
+      CmdArgs.push_back(BrigF);
+      LnkCmdArgs.push_back(BrigF);
+    }
+  }
+
+  AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  //for (unsigned long i=0; i< CmdArgs.size(); i++) {
+  //  printf ("Arg %s\n", CmdArgs[i]);
+  //}
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
+  //printf("hlink: %s\n", (getToolChain().GetProgramPath("hlink").c_str()));
+
+  const char *LnkExec =
+    Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-link");
+
+  int Xtool = (!access(Exec, X_OK) && getenv("XTOOL")) ;
+
+  if (Xtool){
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  }
+  else {
+    ///////////////////////////
+    // Let's do things step by step here
+    ///////////////////////////
+    // get default
+    if (!hlc) {
+      hlc = "/opt/rocm/hcc-hsail/hlc/bin";
+    }
+    if (!tools) {
+      tools = "/opt/rocm/hcc-hsail/HSAILasm";
+    }
+    if (!builtin) {
+      builtin = "/opt/rocm/hcc-hsail/lib";
+    }
+
+    /*
+       printf("HSA HLC: %s\n", hlc);
+       printf("HSA TOOLS: %s\n", tools);
+       printf("HSA BUILTIN: %s\n", builtin);
+    */
+
+    // Need to compute this as we are handline BC files
+    // add paths specified in LIBRARY_PATH environment variable as -L options
+    // CmdArgs.push_back("-lomptarget-hsail");
+    // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
+    addBitCodeLibWithDirectoryList(
+        Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", builtin);
+
+    ///////////////////////////
+    // Link
+    ///////////////////////////
+    C.addCommand(llvm::make_unique<Command>(JA, *this, LnkExec, LnkCmdArgs, Inputs));
+
+    ///////////////////////////
+    // Pre opt
+    ///////////////////////////
+    ArgStringList OptCmdArgs;
+    std::string OptName;
+    const char *OptTemp;
+    if (SaveTemps) {
+      OptTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".opted").c_str());
+    }
+    else {
+      OptName = C.getDriver().GetTemporaryPath(Split.first,"opted");
+      OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
+    }
+    //-O2 -o
+    OptCmdArgs.push_back("-O2");
+    OptCmdArgs.push_back("-o");
+
+    //Opt Output
+    OptCmdArgs.push_back(OptTemp);
+    //Opt Input
+    OptCmdArgs.push_back(LnkTemp);
+
+    Exec = Args.MakeArgString(std::string(hlc) + "/opt");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
+
+    ///////////////////////////
+    // Compile
+    ///////////////////////////
+    ArgStringList LlcCmdArgs;
+    std::string HsailName;
+    const char *HsailTemp;
+    if (SaveTemps) {
+      HsailTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".hsail").c_str());
+    }
+    else {
+      HsailName = C.getDriver().GetTemporaryPath(Split.first,"hsail");
+      HsailTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
+    }
+    //-O2 -march=hsail64 -filetype=asm -o
+    LlcCmdArgs.push_back("-O2");
+    LlcCmdArgs.push_back("-march=hsail64");
+    LlcCmdArgs.push_back("-filetype=asm");
+    LlcCmdArgs.push_back("-o");
+
+    //Llc Output
+    LlcCmdArgs.push_back(HsailTemp);
+    //Llc Input
+    LlcCmdArgs.push_back(OptTemp);
+
+    Exec = Args.MakeArgString(std::string(hlc) + "/llc");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
+
+    ///////////////////////////
+    // Assemble
+    ///////////////////////////
+    ArgStringList AsmCmdArgs;
+    //std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
+    //const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
+    //-assemble -brig -bif32 -o
+    AsmCmdArgs.push_back("-assemble");
+    AsmCmdArgs.push_back("-brig");
+    AsmCmdArgs.push_back("-bif32");
+    AsmCmdArgs.push_back("-o");
+
+    //Asm Output
+    //AsmCmdArgs.push_back(BrigTemp);
+    AsmCmdArgs.push_back(Output.getFilename());
+    //Asm Input
+    AsmCmdArgs.push_back(HsailTemp);
+
+    Exec = Args.MakeArgString(std::string(tools) + "/HSAILasm");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
+  }
+}
+

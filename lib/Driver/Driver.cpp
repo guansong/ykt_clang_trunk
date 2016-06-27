@@ -2723,6 +2723,13 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         TC = new toolchains::WebAssembly(*this, Target, Args);
         break;
       default:
+        // This is an HSAIL
+        if (Target.getArch() == llvm::Triple::hsail ||
+            Target.getArch() == llvm::Triple::hsail64) {
+          TC = new toolchains::HSAIL_TC(*this, Target, Args,
+                                        IsOpenMPTargetToolchain);
+          break;
+        }
         if (Target.isOSBinFormatELF())
           TC = new toolchains::Generic_ELF(*this, Target, Args,
                                            IsOpenMPTargetToolchain);

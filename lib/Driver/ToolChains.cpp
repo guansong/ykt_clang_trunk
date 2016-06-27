@@ -4108,3 +4108,65 @@ void WebAssembly::addClangTargetOptions(const ArgList &DriverArgs,
     CC1Args.push_back("-fuse-init-array");
 }
 
+HSAIL_TC::HSAIL_TC(const Driver &D, const llvm::Triple &Triple,
+                   const ArgList &Args, bool IsOpenMPTargetToolchain)
+                 : ToolChain(D, Triple, Args, IsOpenMPTargetToolchain) {
+  // ProgramPaths are found via 'PATH' environment variable.
+}
+
+Tool *HSAIL_TC::buildAssembler() const {
+  return new tools::HSAIL::Assemble(*this);
+}
+
+Tool *HSAIL_TC::buildLinker() const {
+  return new tools::HSAIL::Link(*this);
+}
+
+bool HSAIL_TC::isPICDefault() const {
+  return false;
+}
+
+bool HSAIL_TC::isPIEDefault() const {
+  return false;
+}
+
+bool HSAIL_TC::isPICDefaultForced() const {
+  return false;
+}
+
+bool HSAIL_TC::SupportsProfiling() const {
+  return false;
+}
+
+bool HSAIL_TC::hasBlocksRuntime() const {
+  return false;
+}
+
+bool HSAIL_TC::UseHostToolChainInstead(const JobAction *JA) const{
+  if (isa<PreprocessJobAction>(JA))
+    return true;
+
+  return ToolChain::UseHostToolChainInstead(JA);
+}
+
+llvm::opt::DerivedArgList *
+HSAIL_TC::TranslateArgs(const llvm::opt::DerivedArgList &Args,
+              const char *BoundArch,
+              bool isOpenMPTarget,
+              bool &isSuccess) const {
+
+  isSuccess = true;
+
+  // We do not need any translation for this target
+  return 0;
+}
+
+#if 0
+/// HSAIL tool chain
+HSAIL_TC::HSAIL_TC(const Driver &D, const llvm::Triple &Triple,
+                   const ArgList &Args, bool IsOpenMPTargetToolchain)
+                 : NVPTX_TC(D, Triple, Args, IsOpenMPTargetToolchain) {
+  // ProgramPaths are found via 'PATH' environment variable.
+}
+#endif
+

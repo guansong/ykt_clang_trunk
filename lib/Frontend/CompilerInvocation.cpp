@@ -36,10 +36,13 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include <atomic>
 #include <memory>
 #include <sys/stat.h>
 #include <system_error>
+
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -1939,6 +1942,8 @@ static void ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
   Opts.UseLineDirectives = Args.hasArg(OPT_fuse_line_directives);
 }
 
+extern bool isHSATriple;
+
 static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
   using namespace options;
   Opts.ABI = Args.getLastArgValue(OPT_target_abi);
@@ -1951,6 +1956,18 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args) {
   // Use the default target triple if unspecified.
   if (Opts.Triple.empty())
     Opts.Triple = llvm::sys::getDefaultTargetTriple();
+
+  llvm::Triple TT(Opts.Triple);
+  if (TT.getArch() == llvm::Triple::hsail ||
+      TT.getArch() == llvm::Triple::hsail64) {
+    //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " " << TT.getTriple() << "\n";
+
+    isHSATriple = true;
+
+    llvm::Triple fakeTriple;
+    fakeTriple.setArch(llvm::Triple::amdgcn);
+    Opts.Triple = fakeTriple.getTriple();
+  }
 }
 
 bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
