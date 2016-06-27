@@ -34,6 +34,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Timer.h"
+#include "llvm/Support/Debug.h"
 #include <memory>
 using namespace clang;
 using namespace llvm;
@@ -127,6 +128,7 @@ namespace clang {
     }
 
     void HandleTranslationUnit(ASTContext &C) override {
+      DELIMITER("Translation Unit");
       {
         PrettyStackTraceString CrashInfo("Per-file LLVM IR generation");
         if (llvm::TimePassesIsEnabled)
@@ -176,9 +178,14 @@ namespace clang {
       void *OldDiagnosticContext = Ctx.getDiagnosticContext();
       Ctx.setDiagnosticHandler(DiagnosticHandler, this);
 
+      PerformPrelinkPasses(Diags, CodeGenOpts, TargetOpts, LangOpts,
+                           C.getTargetInfo().getDataLayoutString(),
+                           TheModule.get(), Action);
+
       EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
                         C.getTargetInfo().getDataLayoutString(),
-                        TheModule.get(), Action, AsmOutStream);
+                        TheModule.get(), Action, AsmOutStream,
+                        false /* SetLLVMOpts */);
 
       Ctx.setInlineAsmDiagnosticHandler(OldHandler, OldContext);
 

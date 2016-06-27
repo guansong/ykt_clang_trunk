@@ -40,6 +40,7 @@
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
+#include "llvm/Support/Debug.h"
 #include <memory>
 using namespace clang;
 using namespace llvm;
@@ -53,8 +54,10 @@ class EmitAssemblyHelper {
   const LangOptions &LangOpts;
   Module *TheModule;
 
+  Timer PreLinkTime;
   Timer CodeGenerationTime;
 
+  mutable legacy::PassManager *PreLinkPasses;
   mutable legacy::PassManager *CodeGenPasses;
   mutable legacy::PassManager *PerModulePasses;
   mutable legacy::FunctionPassManager *PerFunctionPasses;
@@ -94,6 +97,15 @@ private:
     return PerFunctionPasses;
   }
 
+  legacy::PassManager *getPreLinkPasses() const {
+    if (!PreLinkPasses) {
+      PreLinkPasses = new legacy::PassManager();
+      PreLinkPasses->add(
+          createTargetTransformInfoWrapperPass(getTargetIRAnalysis()));
+    }
+    return PreLinkPasses;
+  }
+
   void CreatePasses();
 
   /// Generates the TargetMachine.
@@ -119,10 +131,14 @@ public:
                      Module *M)
     : Diags(_Diags), CodeGenOpts(CGOpts), TargetOpts(TOpts), LangOpts(LOpts),
       TheModule(M), CodeGenerationTime("Code Generation Time"),
-      CodeGenPasses(nullptr), PerModulePasses(nullptr),
+      PreLinkPasses(nullptr), CodeGenPasses(nullptr), PerModulePasses(nullptr),
       PerFunctionPasses(nullptr) {}
 
+  /// Add target specific pre-linking passes.
+  void AddPreLinkPasses();
+
   ~EmitAssemblyHelper() {
+    delete PreLinkPasses;
     delete CodeGenPasses;
     delete PerModulePasses;
     delete PerFunctionPasses;
@@ -133,6 +149,14 @@ public:
   std::unique_ptr<TargetMachine> TM;
 
   void EmitAssembly(BackendAction Action, raw_pwrite_stream *OS);
+  void DoPreLinkPasses();
+
+  /// Set LLVM command line options passed through -backend-option.
+  void setCommandLineOpts();
+
+  /// Set up target for target specific pre-linking passes and LLVM code
+  /// generation.
+  void setTarget(BackendAction Action);
 };
 
 // We need this wrapper to access LangOpts and CGOpts from extension functions
@@ -417,6 +441,32 @@ void EmitAssemblyHelper::CreatePasses() {
   PMBuilder.populateModulePassManager(*MPM);
 }
 
+void EmitAssemblyHelper::setCommandLineOpts() {
+  SmallVector<const char *, 16> BackendArgs;
+  BackendArgs.push_back("clang"); // Fake program name.
+  if (!CodeGenOpts.DebugPass.empty()) {
+    BackendArgs.push_back("-debug-pass");
+    BackendArgs.push_back(CodeGenOpts.DebugPass.c_str());
+  }
+  if (!CodeGenOpts.LimitFloatPrecision.empty()) {
+    BackendArgs.push_back("-limit-float-precision");
+    BackendArgs.push_back(CodeGenOpts.LimitFloatPrecision.c_str());
+  }
+  for (const std::string &BackendOption : CodeGenOpts.BackendOptions)
+    BackendArgs.push_back(BackendOption.c_str());
+  BackendArgs.push_back(nullptr);
+  llvm::cl::ParseCommandLineOptions(BackendArgs.size() - 1,
+                                    BackendArgs.data());
+}
+
+void EmitAssemblyHelper::setTarget(BackendAction Action) {
+  bool UsesCodeGen = (Action != Backend_EmitNothing &&
+                      Action != Backend_EmitBC &&
+                      Action != Backend_EmitLL);
+  if (!TM)
+    TM.reset(CreateTargetMachine(UsesCodeGen));
+}
+
 TargetMachine *EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   // Create the TargetMachine for generating code.
   std::string Error;
@@ -587,6 +637,11 @@ bool EmitAssemblyHelper::AddEmitPasses(BackendAction Action,
   return true;
 }
 
+void EmitAssemblyHelper::AddPreLinkPasses() {
+  legacy::PassManager *PM = getPreLinkPasses();
+  TM->addPreLinkPasses(*PM);
+}
+
 void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
                                       raw_pwrite_stream *OS) {
   TimeRegion Region(llvm::TimePassesIsEnabled ? &CodeGenerationTime : nullptr);
@@ -594,8 +649,6 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
   bool UsesCodeGen = (Action != Backend_EmitNothing &&
                       Action != Backend_EmitBC &&
                       Action != Backend_EmitLL);
-  if (!TM)
-    TM.reset(CreateTargetMachine(UsesCodeGen));
 
   if (UsesCodeGen && !TM)
     return;
@@ -649,14 +702,35 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
   }
 }
 
+void EmitAssemblyHelper::DoPreLinkPasses() {
+  TimeRegion Region(llvm::TimePassesIsEnabled ? &PreLinkTime : nullptr);
+
+  if (!TM)
+    return;
+
+  AddPreLinkPasses();
+
+  // Before executing passes, print the final values of the LLVM options.
+  cl::PrintOptionValues();
+
+  if (PreLinkPasses) {
+    PrettyStackTraceString CrashInfo("Pre-linking passes");
+    PreLinkPasses->run(*TheModule);
+  }
+}
+
 void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
                               const CodeGenOptions &CGOpts,
                               const clang::TargetOptions &TOpts,
                               const LangOptions &LOpts, StringRef TDesc,
                               Module *M, BackendAction Action,
-                              raw_pwrite_stream *OS) {
+                              raw_pwrite_stream *OS,
+                              bool SetLLVMOpts) {
   EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
 
+  if (SetLLVMOpts)
+    AsmHelper.setCommandLineOpts();
+  AsmHelper.setTarget(Action);
   AsmHelper.EmitAssembly(Action, OS);
 
   // If an optional clang TargetInfo description string was passed in, use it to
@@ -671,3 +745,18 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
     }
   }
 }
+
+void clang::PerformPrelinkPasses(DiagnosticsEngine &Diags,
+                                 const CodeGenOptions &CGOpts,
+                                 const clang::TargetOptions &TOpts,
+                                 const LangOptions &LOpts, const StringRef &TDesc,
+                                 Module *M, BackendAction Action) {
+  DELIMITER("Perform Prelink Passes");
+
+  EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
+
+  AsmHelper.setCommandLineOpts();
+  AsmHelper.setTarget(Action);
+  AsmHelper.DoPreLinkPasses();
+}
+
