@@ -10941,6 +10941,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     else {
       // get env
       static const char * builtin = getenv("HSA_BUILTIN_PATH");
+      static const char * mcpu = getenv("MCPU");
 
       ///////////////////////////
       // get default
@@ -11016,11 +11017,16 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
         HsailName = C.getDriver().GetTemporaryPath(Split.first,"o");
         ObjTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
       }
-      //-O2 -mtriple amdgcn--amdhsa -mcpu=kaveri -filetype=obj -o
+
+      //-O2 -mtriple amdgcn--amdhsa -mcpu kaveri -filetype=obj -o
       LlcCmdArgs.push_back("-O2");
       LlcCmdArgs.push_back("-mtriple");
       LlcCmdArgs.push_back("amdgcn--amdhsa");
-      LlcCmdArgs.push_back("-mcpu=kaveri");
+      LlcCmdArgs.push_back("-mcpu");
+      if (!mcpu)
+        LlcCmdArgs.push_back("kaveri");
+      else
+        LlcCmdArgs.push_back(mcpu);
       LlcCmdArgs.push_back("-filetype=obj");
       LlcCmdArgs.push_back("-o");
 
