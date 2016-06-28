@@ -10673,11 +10673,6 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                    const InputInfoList &Inputs,
                                    const ArgList &Args,
                                    const char *LinkingOutput) const {
-  // get env
-  static const char * hlc = getenv("HSA_HLC_PATH");
-  static const char * tools = getenv("HSA_TOOLS_PATH");
-  static const char * builtin = getenv("HSA_BUILTIN_PATH");
-
   int SaveTemps = C.getDriver().isSaveTempsEnabled();
 
   if (!Output.isFilename()) {
@@ -10811,9 +10806,6 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     Args.MakeArgString(getToolChain().GetProgramPath("hlink"));
   //printf("hlink: %s\n", (getToolChain().GetProgramPath("hlink").c_str()));
 
-  const char *LnkExec =
-    Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-link");
-
   int Xtool = (!access(Exec, X_OK) && getenv("XTOOL")) ;
 
   if (Xtool){
@@ -10823,112 +10815,246 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     ///////////////////////////
     // Let's do things step by step here
     ///////////////////////////
-    // get default
-    if (!hlc) {
-      hlc = "/opt/rocm/hcc-hsail/hlc/bin";
-    }
-    if (!tools) {
-      tools = "/opt/rocm/hcc-hsail/HSAILasm";
-    }
-    if (!builtin) {
-      builtin = "/opt/rocm/hcc-hsail/lib";
-    }
 
-    /*
-       printf("HSA HLC: %s\n", hlc);
-       printf("HSA TOOLS: %s\n", tools);
-       printf("HSA BUILTIN: %s\n", builtin);
-    */
+    static const char * lc = getenv("CLANG_OCL_PATH");
 
-    // Need to compute this as we are handline BC files
-    // add paths specified in LIBRARY_PATH environment variable as -L options
-    // CmdArgs.push_back("-lomptarget-hsail");
-    // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+    if (!lc) {
+      // get env
+      static const char * hlc = getenv("HSA_HLC_PATH");
+      static const char * tools = getenv("HSA_TOOLS_PATH");
 
-    addBitCodeLibWithDirectoryList(
-        Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
-    addBitCodeLibWithDirectoryList(
-        Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
-    addBitCodeLibWithDirectoryList(
-        Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", builtin);
+      static const char * builtin = getenv("HSA_BUILTIN_PATH");
 
-    ///////////////////////////
-    // Link
-    ///////////////////////////
-    C.addCommand(llvm::make_unique<Command>(JA, *this, LnkExec, LnkCmdArgs, Inputs));
+      ///////////////////////////
+      // get default
+      ///////////////////////////
+      if (!hlc) {
+        hlc = "/opt/rocm/hcc-hsail/hlc/bin";
+      }
+      if (!tools) {
+        tools = "/opt/rocm/hcc-hsail/HSAILasm";
+      }
+      if (!builtin) {
+        builtin = "/opt/rocm/hcc-hsail/lib";
+      }
 
-    ///////////////////////////
-    // Pre opt
-    ///////////////////////////
-    ArgStringList OptCmdArgs;
-    std::string OptName;
-    const char *OptTemp;
-    if (SaveTemps) {
-      OptTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".opted").c_str());
+      /*
+         printf("HSA HLC: %s\n", hlc);
+         printf("HSA TOOLS: %s\n", tools);
+         printf("HSA BUILTIN: %s\n", builtin);
+         */
+
+      ///////////////////////////
+      // Link
+      ///////////////////////////
+      const char *LnkExec =
+        Args.MakeArgString(getToolChain().getDriver().Dir + "/llvm-link");
+
+      // Need to compute this as we are handline BC files
+      // add paths specified in LIBRARY_PATH environment variable as -L options
+      // CmdArgs.push_back("-lomptarget-hsail");
+      // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", builtin);
+
+      C.addCommand(llvm::make_unique<Command>(JA, *this, LnkExec, LnkCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Pre opt
+      ///////////////////////////
+      ArgStringList OptCmdArgs;
+      std::string OptName;
+      const char *OptTemp;
+      if (SaveTemps) {
+        OptTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".opted").c_str());
+      }
+      else {
+        OptName = C.getDriver().GetTemporaryPath(Split.first,"opted");
+        OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
+      }
+      //-O2 -o
+      OptCmdArgs.push_back("-O2");
+      OptCmdArgs.push_back("-o");
+
+      //Opt Output
+      OptCmdArgs.push_back(OptTemp);
+      //Opt Input
+      OptCmdArgs.push_back(LnkTemp);
+
+      Exec = Args.MakeArgString(std::string(hlc) + "/opt");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Compile
+      ///////////////////////////
+      ArgStringList LlcCmdArgs;
+      std::string HsailName;
+      const char *HsailTemp;
+      if (SaveTemps) {
+        HsailTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".hsail").c_str());
+      }
+      else {
+        HsailName = C.getDriver().GetTemporaryPath(Split.first,"hsail");
+        HsailTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
+      }
+      //-O2 -march=hsail64 -filetype=asm -o
+      LlcCmdArgs.push_back("-O2");
+      LlcCmdArgs.push_back("-march=hsail64");
+      LlcCmdArgs.push_back("-filetype=asm");
+      LlcCmdArgs.push_back("-o");
+
+      //Llc Output
+      LlcCmdArgs.push_back(HsailTemp);
+      //Llc Input
+      LlcCmdArgs.push_back(OptTemp);
+
+      Exec = Args.MakeArgString(std::string(hlc) + "/llc");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Assemble
+      ///////////////////////////
+      ArgStringList AsmCmdArgs;
+      //std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
+      //const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
+      //-assemble -brig -bif32 -o
+      AsmCmdArgs.push_back("-assemble");
+      AsmCmdArgs.push_back("-brig");
+      AsmCmdArgs.push_back("-bif32");
+      AsmCmdArgs.push_back("-o");
+
+      //Asm Output
+      //AsmCmdArgs.push_back(BrigTemp);
+      AsmCmdArgs.push_back(Output.getFilename());
+      //Asm Input
+      AsmCmdArgs.push_back(HsailTemp);
+
+      Exec = Args.MakeArgString(std::string(tools) + "/HSAILasm");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
     }
     else {
-      OptName = C.getDriver().GetTemporaryPath(Split.first,"opted");
-      OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
+      // get env
+      static const char * builtin = getenv("HSA_BUILTIN_PATH");
+
+      ///////////////////////////
+      // get default
+      ///////////////////////////
+      if (!builtin) {
+        builtin = "/opt/rocm/hcc-hsail/lib";
+      }
+
+      /*
+         printf("HSA HLC: %s\n", hlc);
+         printf("HSA TOOLS: %s\n", tools);
+         printf("HSA BUILTIN: %s\n", builtin);
+         */
+
+      ///////////////////////////
+      // Link
+      ///////////////////////////
+      const char *LnkExec =
+        Args.MakeArgString(std::string(lc) + "/llvm-link");
+
+      // Need to compute this as we are handline BC files
+      // add paths specified in LIBRARY_PATH environment variable as -L options
+      // CmdArgs.push_back("-lomptarget-hsail");
+      // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "builtins-hsail.opt.bc", "BITCODE_LIBRARY_PATH", builtin);
+      addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "hsail-amdgpu-wrapper.ll", "BITCODE_LIBRARY_PATH", builtin);
+
+      C.addCommand(llvm::make_unique<Command>(JA, *this, LnkExec, LnkCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Pre opt
+      ///////////////////////////
+      ArgStringList OptCmdArgs;
+      std::string OptName;
+      const char *OptTemp;
+      if (SaveTemps) {
+        OptTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".opted").c_str());
+      }
+      else {
+        OptName = C.getDriver().GetTemporaryPath(Split.first,"opted");
+        OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
+      }
+      //-O2 -o
+      OptCmdArgs.push_back("-O2");
+      OptCmdArgs.push_back("-o");
+
+      //Opt Output
+      OptCmdArgs.push_back(OptTemp);
+      //Opt Input
+      OptCmdArgs.push_back(LnkTemp);
+
+      Exec = Args.MakeArgString(std::string(lc) + "/opt");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Compile
+      ///////////////////////////
+      ArgStringList LlcCmdArgs;
+      std::string HsailName;
+      const char *ObjTemp;
+      if (SaveTemps) {
+        ObjTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".o").c_str());
+      }
+      else {
+        HsailName = C.getDriver().GetTemporaryPath(Split.first,"o");
+        ObjTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
+      }
+      //-O2 -mtriple amdgcn--amdhsa -mcpu=kaveri -filetype=obj -o
+      LlcCmdArgs.push_back("-O2");
+      LlcCmdArgs.push_back("-mtriple");
+      LlcCmdArgs.push_back("amdgcn--amdhsa");
+      LlcCmdArgs.push_back("-mcpu=kaveri");
+      LlcCmdArgs.push_back("-filetype=obj");
+      LlcCmdArgs.push_back("-o");
+
+      //Llc Output
+      LlcCmdArgs.push_back(ObjTemp);
+      //Llc Input
+      LlcCmdArgs.push_back(OptTemp);
+
+      Exec = Args.MakeArgString(std::string(lc) + "/llc");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
+
+      ///////////////////////////
+      // Link to shared object
+      ///////////////////////////
+      ArgStringList AsmCmdArgs;
+      //std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
+      //const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
+
+      //-flavor gnu -shared -o
+      AsmCmdArgs.push_back("-flavor");
+      AsmCmdArgs.push_back("gnu");
+      AsmCmdArgs.push_back("-shared");
+      AsmCmdArgs.push_back("-o");
+
+      //Asm Output
+      //AsmCmdArgs.push_back(BrigTemp);
+      AsmCmdArgs.push_back(Output.getFilename());
+      //Asm Input
+      AsmCmdArgs.push_back(ObjTemp);
+
+      Exec = Args.MakeArgString(std::string(lc) + "/lld");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
+
     }
-    //-O2 -o
-    OptCmdArgs.push_back("-O2");
-    OptCmdArgs.push_back("-o");
-
-    //Opt Output
-    OptCmdArgs.push_back(OptTemp);
-    //Opt Input
-    OptCmdArgs.push_back(LnkTemp);
-
-    Exec = Args.MakeArgString(std::string(hlc) + "/opt");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, OptCmdArgs, Inputs));
-
-    ///////////////////////////
-    // Compile
-    ///////////////////////////
-    ArgStringList LlcCmdArgs;
-    std::string HsailName;
-    const char *HsailTemp;
-    if (SaveTemps) {
-      HsailTemp = C.getArgs().MakeArgString((std::string(Output.getFilename()) + ".hsail").c_str());
-    }
-    else {
-      HsailName = C.getDriver().GetTemporaryPath(Split.first,"hsail");
-      HsailTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
-    }
-    //-O2 -march=hsail64 -filetype=asm -o
-    LlcCmdArgs.push_back("-O2");
-    LlcCmdArgs.push_back("-march=hsail64");
-    LlcCmdArgs.push_back("-filetype=asm");
-    LlcCmdArgs.push_back("-o");
-
-    //Llc Output
-    LlcCmdArgs.push_back(HsailTemp);
-    //Llc Input
-    LlcCmdArgs.push_back(OptTemp);
-
-    Exec = Args.MakeArgString(std::string(hlc) + "/llc");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, LlcCmdArgs, Inputs));
-
-    ///////////////////////////
-    // Assemble
-    ///////////////////////////
-    ArgStringList AsmCmdArgs;
-    //std::string BrigName = C.getDriver().GetTemporaryPath(Split.first,"brig");
-    //const char *BrigTemp = C.addTempFile(C.getArgs().MakeArgString(BrigName.c_str()));
-    //-assemble -brig -bif32 -o
-    AsmCmdArgs.push_back("-assemble");
-    AsmCmdArgs.push_back("-brig");
-    AsmCmdArgs.push_back("-bif32");
-    AsmCmdArgs.push_back("-o");
-
-    //Asm Output
-    //AsmCmdArgs.push_back(BrigTemp);
-    AsmCmdArgs.push_back(Output.getFilename());
-    //Asm Input
-    AsmCmdArgs.push_back(HsailTemp);
-
-    Exec = Args.MakeArgString(std::string(tools) + "/HSAILasm");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, AsmCmdArgs, Inputs));
   }
 }
 
