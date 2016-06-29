@@ -10816,33 +10816,34 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // Let's do things step by step here
     ///////////////////////////
 
-    static const char * lc = getenv("CLANG_OCL_PATH");
+    static const char * useHsail = getenv("HSAIL");
 
-    if (!lc) {
+    if (useHsail) {
       // get env
+      static const char * builtin = getenv("HSA_BUILTIN_PATH");
+
       static const char * hlc = getenv("HSA_HLC_PATH");
       static const char * tools = getenv("HSA_TOOLS_PATH");
-
-      static const char * builtin = getenv("HSA_BUILTIN_PATH");
 
       ///////////////////////////
       // get default
       ///////////////////////////
+      if (!builtin) {
+        builtin = "/opt/rocm/hcc-hsail/lib";
+      }
+
       if (!hlc) {
         hlc = "/opt/rocm/hcc-hsail/hlc/bin";
       }
       if (!tools) {
         tools = "/opt/rocm/hcc-hsail/HSAILasm";
       }
-      if (!builtin) {
-        builtin = "/opt/rocm/hcc-hsail/lib";
-      }
 
       /*
          printf("HSA HLC: %s\n", hlc);
          printf("HSA TOOLS: %s\n", tools);
          printf("HSA BUILTIN: %s\n", builtin);
-         */
+      */
 
       ///////////////////////////
       // Link
@@ -10856,7 +10857,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
       addBitCodeLibWithDirectoryList(
-          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "LIBRARY_PATH");
 
       addBitCodeLibWithDirectoryList(
           Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
@@ -10940,8 +10941,11 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
     }
     else {
       // get env
-      static const char * builtin = getenv("HSA_BUILTIN_PATH");
       static const char * mcpu = getenv("MCPU");
+
+      static const char * builtin = getenv("HSA_BUILTIN_PATH");
+
+      static const char * lc = getenv("CLANG_OCL_PATH");
 
       ///////////////////////////
       // get default
@@ -10950,11 +10954,15 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
         builtin = "/opt/rocm/hcc-hsail/lib";
       }
 
+      if (!lc) {
+        lc = "/opt/amd/llvm/bin";
+      }
+
       /*
          printf("HSA HLC: %s\n", hlc);
          printf("HSA TOOLS: %s\n", tools);
          printf("HSA BUILTIN: %s\n", builtin);
-         */
+      */
 
       ///////////////////////////
       // Link
@@ -10968,7 +10976,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
       addBitCodeLibWithDirectoryList(
-          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "");
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "LIBRARY_PATH");
 
       addBitCodeLibWithDirectoryList(
           Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
