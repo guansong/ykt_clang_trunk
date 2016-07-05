@@ -3589,7 +3589,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Args.hasArg(options::OPT_fopenmp)){
     if ( JA.getOffloadingDevice() && JA.getType() == types::TY_PP_Asm ) {
-      if (Triple.getArch() == llvm::Triple::hsail ||
+      if (Triple.getArch() == llvm::Triple::amdgcn ||
+          Triple.getArch() == llvm::Triple::hsail ||
           Triple.getArch() == llvm::Triple::hsail64) {
         if (! isa<PreprocessJobAction>(JA)) {
           //llvm::dbgs() << "[Diag] " << __FILE__ << ":" << __LINE__ << " HSAIL" << "\n";
@@ -10645,7 +10646,8 @@ void HSAIL::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
 
     ArgStringList AsmCmdArgs;
 
-    int PromotePass = (1 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
+    // Do promotion in compile phase if we have an external pass
+    int PromotePass = (0 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
 
     if (PromotePass) {
       AsmExec = Args.MakeArgString(getToolChain().getDriver().Dir + "/opt");
@@ -10756,7 +10758,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
     ArgStringList CopyCmdArgs;
 
-    // Do promotion here if we have an external pass
+    // Do promotion in link phase if we have an external pass
     int PromotePass = (0 && !access ((getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so").c_str(), F_OK));
 
     if (PromotePass) {
@@ -10766,6 +10768,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
           Args.MakeArgString(getToolChain().getDriver().Dir + "/../lib/LLVMPromote.so"));
       CopyCmdArgs.push_back("-promote-globals");
     }
+
 
     // input
     CopyCmdArgs.push_back(II.getFilename());
