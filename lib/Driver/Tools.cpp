@@ -29,6 +29,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -10882,7 +10883,11 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
         OptName = C.getDriver().GetTemporaryPath(Split.first,"opted");
         OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
       }
+
       //-O2 -o
+      if (getenv("PASSES")) {
+        OptCmdArgs.push_back("--debug-pass=Structure");
+      }
       OptCmdArgs.push_back("-O2");
       OptCmdArgs.push_back("-o");
 
@@ -10908,7 +10913,10 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
         HsailTemp = C.addTempFile(C.getArgs().MakeArgString(HsailName.c_str()));
       }
       //-O2 -march=hsail64 -filetype=asm -o
-      LlcCmdArgs.push_back("-O2");
+      if (getenv("PASSES")) {
+        LlcCmdArgs.push_back("--debug-pass=Structure");
+      }
+      //LlcCmdArgs.push_back("-O2");
       LlcCmdArgs.push_back("-march=hsail64");
       LlcCmdArgs.push_back("-filetype=asm");
       LlcCmdArgs.push_back("-o");
@@ -11004,6 +11012,9 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
         OptTemp = C.addTempFile(C.getArgs().MakeArgString(OptName.c_str()));
       }
       //-O2 -o
+      if (getenv("PASSES")) {
+        OptCmdArgs.push_back("--debug-pass=Structure");
+      }
       OptCmdArgs.push_back("-O2");
       OptCmdArgs.push_back("-o");
 
@@ -11030,7 +11041,10 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       }
 
       //-O2 -mtriple amdgcn--amdhsa -mcpu kaveri -filetype=obj -o
-      LlcCmdArgs.push_back("-O2");
+      if (getenv("PASSES")) {
+        LlcCmdArgs.push_back("--debug-pass=Structure");
+      }
+      //LlcCmdArgs.push_back("-O2");
       LlcCmdArgs.push_back("-mtriple");
       LlcCmdArgs.push_back("amdgcn--amdhsa");
       LlcCmdArgs.push_back("-mcpu");
