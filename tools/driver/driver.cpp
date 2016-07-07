@@ -426,8 +426,14 @@ int main(int argc_, const char **argv_) {
   // Determines whether we want nullptr markers in argv to indicate response
   // files end-of-lines. We only use this for the /LINK driver argument.
   bool MarkEOLs = true;
-  if (argv.size() > 1 && StringRef(argv[1]).startswith("-cc1"))
+  if (argv.size() > 1 && StringRef(argv[1]).startswith("-cc1")) {
     MarkEOLs = false;
+    if (getenv("PAUSE")) {
+        printf("Press <return> key to continue...\n");
+        char ch;
+        ch = getchar();
+    }
+  }
   llvm::cl::ExpandResponseFiles(Saver, Tokenizer, argv, MarkEOLs);
 
   // Handle -cc1 integrated tools, even if -cc1 was expanded from a response
