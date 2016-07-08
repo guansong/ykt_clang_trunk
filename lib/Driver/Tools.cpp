@@ -178,14 +178,14 @@ static void addDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
   }
 }
 
-static void addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
+static bool addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
                              const char *ArgName, const char *EnvVar, const char *DefaultPath) {
   const char *DirList = ::getenv(EnvVar);
   bool CombinedArg = false;
   bool Found = false;
 
   if (!DirList)
-    return; // Nothing to do.
+    return Found; // Nothing to do.
 
   StringRef Name(ArgName);
   if (Name.equals("-I") || Name.equals("-L"))
@@ -193,7 +193,7 @@ static void addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &C
 
   StringRef Dirs(DirList);
   if (Dirs.empty()) // Empty string should not add '.'.
-    return;
+    return Found;
 
   StringRef::size_type Delim;
   while ((Delim = Dirs.find(llvm::sys::EnvPathSeparator)) != StringRef::npos) {
@@ -250,6 +250,8 @@ static void addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &C
       Found = true;
     }
   }
+
+  return Found;
 
 }
 
@@ -10860,8 +10862,10 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       // CmdArgs.push_back("-lomptarget-hsail");
       // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
-      addBitCodeLibWithDirectoryList(
-          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "LIBRARY_PATH");
+      if (!addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", ""))
+        addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "LIBRARY_PATH", "");
 
       addBitCodeLibWithDirectoryList(
           Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
@@ -10962,7 +10966,7 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       // get default
       ///////////////////////////
       if (!builtin) {
-        builtin = "/opt/rocm/hcc-hsail/lib";
+        builtin = "/opt/rocm/hcc-lc/lib";
       }
 
       if (!lc) {
@@ -10986,8 +10990,10 @@ void HSAIL::Link::ConstructJob(Compilation &C, const JobAction &JA,
       // CmdArgs.push_back("-lomptarget-hsail");
       // addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
-      addBitCodeLibWithDirectoryList(
-          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", "LIBRARY_PATH");
+      if (!addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "BITCODE_LIBRARY_PATH", ""))
+        addBitCodeLibWithDirectoryList(
+          Args, LnkCmdArgs, "libomptarget-amdgcn-hsail.bc", "LIBRARY_PATH", "");
 
       addBitCodeLibWithDirectoryList(
           Args, LnkCmdArgs, "hsa_math.bc", "BITCODE_LIBRARY_PATH", builtin);
