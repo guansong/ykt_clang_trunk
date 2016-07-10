@@ -184,8 +184,15 @@ static bool addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &C
   bool CombinedArg = false;
   bool Found = false;
 
-  if (!DirList)
-    return Found; // Nothing to do.
+  if (!DirList) {
+    // No ENV, search default path
+    //printf("%s\n", (std::string(DefaultPath) + "/" + ArgName).c_str());
+    if (!access((std::string(DefaultPath) + "/" + ArgName).c_str(), F_OK)) {
+      CmdArgs.push_back(Args.MakeArgString(std::string(DefaultPath) + "/" + ArgName));
+      Found = true;
+    }
+    return Found;
+  }
 
   StringRef Name(ArgName);
   if (Name.equals("-I") || Name.equals("-L"))
@@ -245,6 +252,8 @@ static bool addBitCodeLibWithDirectoryList(const ArgList &Args, ArgStringList &C
   }
 
   if (!Found) {
+    // No thing in ENV, search default path
+    //printf("%s\n", (std::string(DefaultPath) + "/" + ArgName).c_str());
     if (!access((std::string(DefaultPath) + "/" + ArgName).c_str(), F_OK)) {
       CmdArgs.push_back(Args.MakeArgString(std::string(DefaultPath) + "/" + ArgName));
       Found = true;
