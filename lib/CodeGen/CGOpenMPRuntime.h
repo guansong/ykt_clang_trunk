@@ -741,6 +741,16 @@ public:
   virtual llvm::Value * Get_kmpc_print_int();
   virtual llvm::Value * Get_kmpc_print_address_int64();
 
+  //HSAIL intrinsic, use _kmpc just for quick prototye  
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_global_size)
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_global_id)
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_local_size)
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_local_id)
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_num_groups)
+  DEFAULT_EMIT_OPENMP_DECL(ocl_get_group_id)
+
+  DEFAULT_EMIT_OPENMP_DECL(ocl_barrier)
+
   virtual llvm::Value * Get_omp_get_num_threads();
   virtual llvm::Value * Get_omp_get_thread_num();
   virtual llvm::Value * Get_omp_get_num_teams();
