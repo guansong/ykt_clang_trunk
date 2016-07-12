@@ -212,6 +212,16 @@ typedef void(__kmpc_end_taskgroup)(ident_t *loc, int32_t global_tid);
 typedef void(___kmpc_print_int)(int32_t data);
 typedef void(__kmpc_print_address_int64)(int64_t i);
 
+//HSAIL intrinsic, use _kmpc just for quick prototye
+typedef int32_t(__kmpc_ocl_get_global_size)();
+typedef int32_t(__kmpc_ocl_get_global_id)();
+typedef int32_t(__kmpc_ocl_get_local_size)();
+typedef int32_t(__kmpc_ocl_get_local_id)();
+typedef int32_t(__kmpc_ocl_get_num_groups)();
+typedef int32_t(__kmpc_ocl_get_group_id)();
+
+typedef void(__kmpc_ocl_barrier)();
+
 // OMP runtime functions used within clang
 typedef int32_t(omp_get_num_threads)();
 typedef int32_t(omp_get_thread_num)();

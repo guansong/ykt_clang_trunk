@@ -39,6 +39,8 @@
 using namespace clang;
 using namespace CodeGen;
 
+extern bool isHSATriple;
+
 namespace {
 /// \brief RAII for emitting code of CapturedStmt without function outlining.
 class InlinedOpenMPRegion {
@@ -840,6 +842,18 @@ static llvm::GlobalVariable *CreateRuntimeVariable(CodeGenModule &CGM,
       llvm::GlobalVariable::NotThreadLocal, AddrSpace);
 }
 
+static llvm::GlobalVariable *CreateRuntimeVariable(CodeGenModule &CGM,
+                                                   StringRef MangledName,
+                                                   llvm::Type *Ty, unsigned AddrSpace) {
+  //llvm::PointerType *PtrTy = llvm::PointerType::getUnqual(Ty);
+  //unsigned AddrSpace = PtrTy->getAddressSpace();
+  return new llvm::GlobalVariable(
+      CGM.getModule(), Ty, false, llvm::GlobalValue::PrivateLinkage,
+      llvm::Constant::getNullValue(Ty), MangledName, 0,
+      llvm::GlobalVariable::NotThreadLocal, AddrSpace);
+}
+
+
 // Utility function that identifies captured declaration that refer to loop
 // bounds.
 bool CodeGenFunction::IsCombinedDirectiveLoopBoundCapture(
@@ -1045,6 +1059,10 @@ void CodeGenFunction::EmitOMPDirectiveWithParallelNoMicrotask(
   EnsureInsertPoint();
   // Implicit barrier for simple parallel region only.
   // Others (combined) directives already has implicit barriers.
+  #if 0 // this old code, consider nvidia only
+  bool IsNvptxTarget =
+      CGM.getLangOpts().OpenMPTargetMode &&
+      (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
 
   if (DKind == OMPD_parallel && !IsNvptxTarget) {
     EmitOMPCancelBarrier(S.getLocEnd(), KMP_IDENT_BARRIER_IMPL);
@@ -1055,6 +1073,11 @@ void CodeGenFunction::EmitOMPDirectiveWithParallelNoMicrotask(
     if (isTargetMode) {
       CGM.getOpenMPRuntime().ExitParallelRegionInTarget(*this);
     }
+  }
+  #endif
+
+  if (isTargetMode) {
+    CGM.getOpenMPRuntime().ExitParallelRegionInTarget(*this);
   }
 
   if (CGM.getOpenMPRuntime().RequireFirstprivateSynchronization())
@@ -1112,7 +1135,7 @@ void CodeGenFunction::EmitOMPDirectiveWithParallelMicrotask(
   // ptxas does not allow names with dots: specialize
   std::string microTaskName;
   if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx
-      || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)
+      || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64 || isHSATriple)
     microTaskName = "omp_microtask";
   else
     microTaskName = ".omp_microtask.";
@@ -1660,8 +1683,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
         if (HasSimd) {
           if (CGM.getLangOpts().OpenMPTargetMode &&
               (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
-               CGM.getTarget().getTriple().getArch() ==
-                   llvm::Triple::nvptx64)) {
+               CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)) {
             InlinedOpenMPRegion Region(*this, S.getAssociatedStmt());
             RunCleanupsScope ExecutedScope(*this);
 
@@ -1685,6 +1707,10 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             CGPragmaOmpSimd Wrapper(&S, Private, PUB);
             EmitPragmaSimd(Wrapper);
           } else {
+            if (CGM.getLangOpts().OpenMPTargetMode && isHSATriple) {
+              MARK("[Assert]");
+              llvm::dbgs() << "Arch " << CGM.getTarget().getTriple().getArch() << "\n";
+            }
             RunCleanupsScope Scope(*this);
             BodyFunction = EmitSimdFunction(SimdWrapper);
             EmitSIMDForHelperCall(BodyFunction, CapStruct, Private, false);
@@ -2310,11 +2336,14 @@ ProcessDependAddresses(CodeGenFunction &CGF, const OMPExecutableDirective &S) {
 /// Generate instructions for directive with 'target' region.
 void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     OpenMPDirectiveKind SKind, const OMPExecutableDirective &S) {
+  DELIMITER("EmitOMPDirectiveWithTarget");
 
   CapturedStmt *CS = cast<CapturedStmt>(S.getAssociatedStmt());
 
   // Are we generating code for a target?
   bool isTargetMode = CGM.getLangOpts().OpenMPTargetMode;
+
+  //MARK("[Diag] OpenMPTargetMode");
 
   assert(
       !(isTargetMode && CGM.getLangOpts().OMPTargetTriples.empty())
@@ -2364,6 +2393,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
 
   // We only need to do the outlining if hasn't already been done
   if (!Fn){
+    DELIMITER("No Fn, need to outline");
     CGM.OpenMPSupport.startOpenMPRegion(true);
     CGM.OpenMPSupport.setTarget(true);
     CGM.OpenMPSupport.setTeams(false);
@@ -2454,6 +2484,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         FnArgs.push_back(OmpHandle);
       }
     }
+    MARK("[Diag] start a new CGF");
     CodeGenFunction CGF(CGM, true);
     const CGFunctionInfo &FI = getTypes().arrangeFunctionDeclaration(FD);
     // The linkage here is going to be overwritten when the attributes are set
@@ -2476,6 +2507,8 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     // Start target region
     // This will complete the initialization done before
     {
+      DELIMITER("Complete target region");
+
       CGF.CurFn = Fn;
       OpenMPRegionRAII OMPRegion(CGF, S, *CS, nullptr,
                                  OpenMPRegionRAII::OMPRegionType_Target);
@@ -2575,9 +2608,14 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
 
     CGM.OpenMPSupport.endOpenMPRegion();
   }
+  else {
+    DELIMITER("Fn, no need to outline");
+  }
 
   // If we are generating code for the host, we need to emit the runtime calls
   if (!isTargetMode) {
+    DELIMITER("OpenMP TargetMode is false");
+
     CGM.OpenMPSupport.startOpenMPRegion(true);
     CGM.OpenMPSupport.setTarget(true);
     CGM.OpenMPSupport.setNoWait(false);
@@ -4405,6 +4443,13 @@ void CodeGenFunction::EmitAfterInitOMPIfClause(const OMPIfClause &C,
                         makeArrayRef(RealArgs));
       }
 
+      if (CGM.getLangOpts().OpenMPTargetMode
+          && isHSATriple
+          && isParallelDirective(&S)) {
+        MARK("[Assert]");
+        llvm::dbgs() << "Arch " << CGM.getTarget().getTriple().getArch() << "\n";
+      }
+
       RunCleanupsScope ElseScope(*this);
       EmitStmt(cast<CapturedStmt>(S.getAssociatedStmt())->getCapturedStmt());
       EnsureInsertPoint();
@@ -5284,7 +5329,7 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
 
     std::string reductionOpName;
     if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx
-       || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)
+       || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64 || isHSATriple)
  	  reductionOpName = "omp_reduction_op";
     else
  	  reductionOpName = ".omp_reduction_op.";
@@ -5745,7 +5790,8 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
   if (!Switch) {
     // for gpu, the synchronized reduction is inserted here
     if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
-        CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64) {
+        CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64 ||
+        isHSATriple ) {
       llvm::Value *res;
       if (combined){
         // For handling combined directives case 1 is required.
@@ -5801,18 +5847,52 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
     llvm::Value *ReduceData =
         Builder.CreatePointerCast(CGM.OpenMPSupport.getReductionRecVar(*this),
                                   VoidPtrTy, "(void*)reductionrec");
-    llvm::Value *ReduceArraySize =
-        Builder.CreatePointerCast(CGM.OpenMPSupport.getReductionRecSize(*this),
-                                  VoidPtrTy, "(void*)reductionarraysize");
+    //llvm::Value *ReduceArraySize =
+    //    Builder.CreatePointerCast(CGM.OpenMPSupport.getReductionRecSize(*this),
+    //                              VoidPtrTy, "(void*)reductionarraysize");
     // kmpc_reduce_func reduce_func = reduce_func;
     // kmp_critical_name lck;
     llvm::Type *LckTy =
         llvm::TypeBuilder<kmp_critical_name, false>::get(CGM.getLLVMContext());
 
-    llvm::GlobalVariable *Lck = CreateRuntimeVariable(CGM, ".lck.", LckTy);
+    llvm::GlobalVariable *Lck;
+    if (!isHSATriple)
+      Lck = CreateRuntimeVariable(CGM, ".lck.", LckTy);
+    else {
+      MARK("[Diag] isHSATriple");
+
+      //llvm::Type *Ty = ReduceFunc->getFunctionType();
+      //Ty->dump();
+
+      //Ty = llvm::TypeBuilder<uint64_t, false>::get(CGM.getLLVMContext());
+
+      //llvm::Constant::getNullValue(llvm::TypeBuilder<int64_t, false>::get(CGM.getLLVMContext()))->dump();
+
+      //llvm::PointerType::get(Ty, 3)->dump();
+      //llvm::Constant::getNullValue(llvm::PointerType::get(ReduceFunc->getFunctionType(),0))->dump();
+
+#if 0
+      llvm::ConstantExpr::getBitCast(
+          llvm::Constant::getNullValue(llvm::TypeBuilder<int64_t, false>::get(CGM.getLLVMContext())),
+          Ty)->dump();
+#endif
+      //Builder.CreateBitCast(CpyVar, VoidPtrTy, "(void*)cpyrec"),
+#if 0
+      Builder.CreateBitCast(
+          llvm::Constant::getNullValue(llvm::TypeBuilder<int64_t, false>::get(CGM.getLLVMContext())),
+          llvm::PointerType::get(Ty, 0),
+          "(void*)func")->dump();
+#endif
+      //ReduceFunc = llvm::Constant::getNullValue(llvm::PointerType::get(ReduceFunc->getFunctionType(),0));
+
+      Lck = CreateRuntimeVariable(CGM, "_lck_", LckTy, 3);
+    }
+
     CGM.OpenMPSupport.setReductionLockVar(Lck);
     llvm::Value *RealArgs[] = {
-        Loc, GTid, NumVarsVal, ReduceSizeVal, ReduceData, ReduceArraySize, ReduceFunc, Lck};
+        Loc, GTid, NumVarsVal, ReduceSizeVal, ReduceData,
+        (isHSATriple?llvm::Constant::getNullValue(llvm::PointerType::get(ReduceFunc->getFunctionType(),0)):ReduceFunc),
+        Lck};
 
     RedBB1 = createBasicBlock("reduction.case1", CurFn);
     RedBB2 = createBasicBlock("reduction.case2", CurFn);
@@ -6776,7 +6856,7 @@ void CodeGenFunction::EmitOMPCriticalDirective(const OMPCriticalDirective &S) {
   std::string directive_name = S.getDirectiveName().getAsString();
   std::string name;
   if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx
-     || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)
+     || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64 || isHSATriple)
 	    name = "_gomp_critical_user_" + directive_name + "_var";
   else
 	    name = ".gomp_critical_user_" + directive_name + ".var";
@@ -6798,6 +6878,11 @@ void CodeGenFunction::EmitOMPCriticalDirective(const OMPCriticalDirective &S) {
     CGM.getOpenMPRuntime().SupportCritical(S, *this, CurFn, Lck);
   }
   else {
+    if (isHSATriple) {
+      MARK("[Assert]");
+      llvm::dbgs() << "Arch " << CGM.getTarget().getTriple().getArch() << "\n";
+    }
+
     EmitRuntimeCall(OPENMPRTL_FUNC(critical), RealArgs);
     EmitOMPCapturedBodyHelper(S);
     EmitRuntimeCall(OPENMPRTL_FUNC(end_critical), RealArgs);
@@ -7105,6 +7190,11 @@ CodeGenFunction::EmitCloseOMPReductionClause(const OMPReductionClause &C,
         CGF.Builder.SetInsertPoint(FinalMergeEndIf);
       }
     } else {
+      if (isHSATriple) {
+        MARK("[Assert]");
+        llvm::dbgs() << "Arch " << CGM.getTarget().getTriple().getArch() << "\n";
+      }
+
 	//array reduction: assingment in callback function
 	if(QTy->isArrayType()) {
           const ArrayType *QAT = QTy->getAsArrayTypeUnsafe();
